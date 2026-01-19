@@ -1,169 +1,195 @@
 import tkinter as tk
-from tkinter import messagebox
-import random
-from Players import CopyCat, Selfish, Generous, Grudger, Detective, Simpleton, Copykitten, RandomPlayer
-from RLagent import RLPlayer, Smarty 
-
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from tkinter import ttk
 import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import random
+import copy
 
-# --- MOTEUR DU JEU ---
-class Game:
-    def __init__(self, num_players, num_rounds, num_replace, num_generous, num_selfish, num_copycat, num_grudger, num_detective, num_simpleton, num_copykitten, num_random, num_smart, num_smarty, ch_ch, c_c, c_ch, ch_c):
-        self.players = []
-        self.num_rounds = num_rounds
-        self.num_replace = num_replace
-        self.ch_ch, self.c_c, self.c_ch, self.ch_c = ch_ch, c_c, c_ch, ch_c
-        
-        # Création des joueurs
-        for i in range(num_generous): self.players.append(Generous(f"Generous {i+1}"))
-        for i in range(num_selfish): self.players.append(Selfish(f"Selfish {i+1}"))
-        for i in range(num_copycat): self.players.append(CopyCat(f"CopyCat {i+1}"))
-        for i in range(num_grudger): self.players.append(Grudger(f"Grudger {i+1}"))
-        for i in range(num_detective): self.players.append(Detective(f"Detective {i+1}"))
-        for i in range(num_simpleton): self.players.append(Simpleton(f"Simpleton {i+1}"))
-        for i in range(num_copykitten): self.players.append(Copykitten(f"Copykitten {i+1}"))
-        for i in range(num_random): self.players.append(RandomPlayer(f"Random {i+1}"))
-        for i in range(num_smart): self.players.append(RLPlayer(f"RL_Agent {i+1}"))
-        for i in range(num_smarty): self.players.append(Smarty(f"Smarty {i+1}"))
+from Players import *
+from RLagent import RL_Memory2, RL_Memory4, BaseRLPlayer 
 
-    def get_reward(self, action1, action2):
-        if action1 == "Cooperate" and action2 == "Cooperate": return self.c_c
-        elif action1 == "Cooperate" and action2 == "Betray": return self.c_ch
-        elif action1 == "Betray" and action2 == "Cooperate": return self.ch_c
-        elif action1 == "Betray" and action2 == "Betray": return self.ch_ch
-        return 0
-
-    def start(self):
-        for i in range(len(self.players)):
-            for j in range(i + 1, len(self.players)):
-                p1, p2 = self.players[i], self.players[j]
-                if isinstance(p1, RLPlayer): p1.opponent_history = []
-                if isinstance(p2, RLPlayer): p2.opponent_history = []
-                p1_last, p2_last = "Cooperate", "Cooperate"
-
-                for round_num in range(1, self.num_rounds + 1):
-                    a1 = p1.perform_action(p2_last, round_num)
-                    a2 = p2.perform_action(p1_last, round_num)
-                    r1 = self.get_reward(a1, a2)
-                    r2 = self.get_reward(a2, a1)
-                    if isinstance(p1, RLPlayer): p1.learn(p2_last, a1, r1, a2)
-                    if isinstance(p2, RLPlayer): p2.learn(p1_last, a2, r2, a1)
-                    p1.money += r1
-                    p2.money += r2
-                    p1_last, p2_last = a1, a2
-
-    def next_generation(self):
-        if len(self.players) <= self.num_replace: return
-        self.players.sort(key=lambda x: x.money)
-        survivors = self.players[self.num_replace:]
-        new_generation = []
-        for p in self.players[-self.num_replace:]: # Les meilleurs se reproduisent
-            new_generation.append(p.__class__(f"{p.__class__.__name__}_Child"))
-        self.players = survivors + new_generation
-
-    def reset_player_money(self):
-        for p in self.players: p.money = 0
-
-    def announce_winner(self):
-        if not self.players: return "No players"
-        counts = {}
-        for p in self.players:
-            name = p.__class__.__name__
-            counts[name] = counts.get(name, 0) + 1
-        return max(counts, key=counts.get)
-
-# --- INTERFACE GRAPHIQUE ---
 class GameGUI:
-    def __init__(self, master):
-        self.master = master
-        self.master.title("Trust of Evolution Game")
-        self.master.geometry("1100x700") # Fenêtre plus large
-
-        # Panneau de gauche (Inputs)
-        input_frame = tk.Frame(master)
-        input_frame.pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=10)
-
-        labels = ["Players", "Rounds", "Replace", "Generous", "Selfish", "CopyCat", "Grudger", "Detective", "Simpleton", "Copykitten", "Random", "Smart (RL)", "Smarty (RL2)", "Cheat-Cheat", "Coop-Coop", "Coop-Cheat", "Cheat-Coop"]
-        defaults = ["25", "100", "5", "2", "2", "2", "2", "1", "1", "1", "1", "5", "2", "0", "2", "-1", "3"]
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Battle: Memory 2 vs Memory 4")
+        self.root.geometry("1100x750")
         
+        self.font_title = ("Arial", 16, "bold")
+        self.font_text = ("Arial", 11)
+        self.font_btn = ("Arial", 12, "bold")
+
+        self.params = {
+            "Rounds": 500,       
+            "Replace": 1,        
+            "Generous": 15,         
+            "CopyCat": 10,          
+            "RL (Memory 2)": 5, 
+            "RL (Memory 4)": 5, 
+            "Selfish": 2,           
+            "Grudger": 2,           
+            "Detective": 0,         
+            "Simpleton": 0,
+            "Copykitten": 0,
+            "Random": 0,
+            "Coop-Coop": 2,
+            "Coop-Cheat": -1,
+            "Cheat-Coop": 3,
+            "Cheat-Cheat": 0
+        }
+
+        self.population = []
+        self.history_stats = {key: [] for key in self.params if key not in ["Rounds", "Replace", "Coop-Coop", "Coop-Cheat", "Cheat-Coop", "Cheat-Cheat"]}
+        self.generation = 0
+        
+        self.create_widgets()
+
+    def create_widgets(self):
+        main_frame = tk.Frame(self.root)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # GAUCHE
+        left_frame = tk.Frame(main_frame, width=320, bg="#f0f0f0", relief="groove", bd=2)
+        left_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10))
+        left_frame.pack_propagate(False)
+
+        tk.Label(left_frame, text="SETTINGS", font=self.font_title, bg="#f0f0f0").pack(side=tk.TOP, pady=15)
+
+        btn_frame = tk.Frame(left_frame, bg="#f0f0f0")
+        btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=20)
+        
+        tk.Button(btn_frame, text="START / RESET", bg="#4CAF50", fg="white", font=self.font_btn, height=2, command=self.start_game).pack(fill=tk.X, pady=5)
+        tk.Button(btn_frame, text="NEXT GEN (+1)", bg="#2196F3", fg="white", font=self.font_btn, height=2, command=self.next_round).pack(fill=tk.X, pady=5)
+
+        canvas_frame = tk.Frame(left_frame, bg="#f0f0f0")
+        canvas_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+        canvas = tk.Canvas(canvas_frame, bg="#f0f0f0", highlightthickness=0)
+        scrollbar = tk.Scrollbar(canvas_frame, orient="vertical", command=canvas.yview)
+        scroll_frame = tk.Frame(canvas, bg="#f0f0f0")
+
+        scroll_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=scroll_frame, anchor="nw", width=280)
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
         self.entries = {}
-        for i, (text, default) in enumerate(zip(labels, defaults)):
-            tk.Label(input_frame, text=text).grid(row=i, column=0, sticky="w", pady=2)
-            entry = tk.Entry(input_frame, width=10)
-            entry.insert(0, default)
-            entry.grid(row=i, column=1, pady=2)
-            key = text.split()[0].lower().replace("-","_") 
-            if "smart (" in text.lower(): key = "smart"
-            if "smarty" in text.lower(): key = "smarty"
+        for key, value in self.params.items():
+            row = tk.Frame(scroll_frame, bg="#f0f0f0")
+            row.pack(fill=tk.X, pady=3)
+            tk.Label(row, text=key, font=self.font_text, width=18, anchor="w", bg="#f0f0f0").pack(side=tk.LEFT)
+            entry = tk.Entry(row, width=6, font=self.font_text, justify="center")
+            entry.insert(0, str(value))
+            entry.pack(side=tk.RIGHT)
             self.entries[key] = entry
 
-        self.btn_start = tk.Button(input_frame, text="Start Game", command=self.start_game, bg="#4CAF50", fg="white", font=("Arial", 12, "bold"))
-        self.btn_start.grid(row=len(labels)+1, column=0, columnspan=2, pady=20, sticky="ew")
-        
-        self.btn_next = tk.Button(input_frame, text="Next Round", command=self.next_round, state=tk.DISABLED, font=("Arial", 10))
-        self.btn_next.grid(row=len(labels)+2, column=0, columnspan=2, sticky="ew")
+        # DROITE
+        right_frame = tk.Frame(main_frame, bg="white", relief="sunken", bd=1)
+        right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
-        # Graphique à droite
-        self.fig = plt.Figure(figsize=(8, 6), dpi=100)
-        self.ax = self.fig.add_subplot(111)
-        # Ajuster les marges pour laisser de la place à la légende
-        self.fig.subplots_adjust(right=0.75) 
+        self.figure, self.ax = plt.subplots(figsize=(6, 5))
+        self.figure.subplots_adjust(left=0.1, right=0.95, top=0.9, bottom=0.1)
         
-        self.canvas = FigureCanvasTkAgg(self.fig, master=master)
-        self.canvas.get_tk_widget().pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
-        
-        self.round_history = []
-        self.population_history = {}
+        self.canvas = FigureCanvasTkAgg(self.figure, master=right_frame)
+        self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
     def start_game(self):
         try:
-            self.game = Game(
-                int(self.entries["players"].get()), int(self.entries["rounds"].get()), int(self.entries["replace"].get()),
-                int(self.entries["generous"].get()), int(self.entries["selfish"].get()), int(self.entries["copycat"].get()),
-                int(self.entries["grudger"].get()), int(self.entries["detective"].get()), int(self.entries["simpleton"].get()),
-                int(self.entries["copykitten"].get()), int(self.entries["random"].get()), 
-                int(self.entries["smart"].get()), int(self.entries["smarty"].get()),
-                int(self.entries["cheat_cheat"].get()), int(self.entries["coop_coop"].get()),
-                int(self.entries["coop_cheat"].get()), int(self.entries["cheat_coop"].get())
-            )
-            self.game.start()
-            self.update_plot(0)
-            self.btn_start.config(state=tk.DISABLED)
-            self.btn_next.config(state=tk.NORMAL)
-        except ValueError: messagebox.showerror("Error", "Check your inputs!")
+            for key in self.entries:
+                self.params[key] = int(self.entries[key].get())
+        except ValueError: return
+
+        self.generation = 0
+        self.population = []
+        self.history_stats = {key: [] for key in self.history_stats}
+
+        mapping = {
+            "Generous": Cooperater, "Selfish": Cheater, "CopyCat": CopyCat,
+            "Grudger": Grudger, "Detective": Detective, "Simpleton": Simpleton,
+            "Copykitten": Copykitten, "Random": RandomPlayer,
+            "RL (Memory 2)": RL_Memory2, 
+            "RL (Memory 4)": RL_Memory4 
+        }
+
+        for name, count in self.params.items():
+            if name in mapping:
+                for _ in range(count):
+                    self.population.append(mapping[name](name))
+        self.update_plot()
+
+    def play_round(self):
+        for p in self.population: 
+            p.reset()
+            p.matches_played = 0
+        
+        rounds = self.params["Rounds"]
+        
+        for i in range(len(self.population)):
+            for j in range(i + 1, len(self.population)):
+                p1 = self.population[i]
+                p2 = self.population[j]
+                
+                if isinstance(p1, BaseRLPlayer) and isinstance(p2, BaseRLPlayer):
+                    continue 
+
+                p1_last, p2_last = None, None
+                for _ in range(rounds):
+                    a1 = p1.perform_action(p2_last, _)
+                    a2 = p2.perform_action(p1_last, _)
+
+                    if a1 == "Cooperate" and a2 == "Cooperate": r1, r2 = self.params["Coop-Coop"], self.params["Coop-Coop"]
+                    elif a1 == "Cooperate" and a2 == "Betray": r1, r2 = self.params["Coop-Cheat"], self.params["Cheat-Coop"]
+                    elif a1 == "Betray" and a2 == "Cooperate": r1, r2 = self.params["Cheat-Coop"], self.params["Coop-Cheat"]
+                    else: r1, r2 = self.params["Cheat-Cheat"], self.params["Cheat-Cheat"]
+
+                    p1.score += r1
+                    p2.score += r2
+                    p1.learn(p2_last, a1, r1, a2)
+                    p2.learn(p1_last, a2, r2, a1)
+                    p1_last, p2_last = a1, a2
+                
+                p1.matches_played += 1
+                p2.matches_played += 1
+
+    def evolve(self):
+        self.population.sort(key=lambda x: x.score / x.matches_played if x.matches_played > 0 else 0, reverse=True)
+        replace_count = self.params["Replace"]
+        
+        for _ in range(replace_count):
+            if len(self.population) > 0: self.population.pop()
+        
+        top_players = self.population[:replace_count]
+        for p in top_players:
+            new_p = copy.copy(p)
+            new_p.reset() 
+            if hasattr(p, 'q_table'): new_p.q_table = copy.deepcopy(p.q_table)
+            self.population.append(new_p)
 
     def next_round(self):
-        self.game.next_generation()
-        self.game.reset_player_money()
-        self.game.start()
-        self.update_plot(len(self.round_history))
-
-    def update_plot(self, round_num):
-        self.round_history.append(round_num)
-        current_counts = {}
-        for p in self.game.players:
-            name = p.__class__.__name__
-            current_counts[name] = current_counts.get(name, 0) + 1
-            
-        all_types = set(list(self.population_history.keys()) + list(current_counts.keys()))
-        for t in all_types:
-            if t not in self.population_history: self.population_history[t] = [0] * (len(self.round_history) - 1)
-            self.population_history[t].append(current_counts.get(t, 0))
-
-        self.ax.clear()
-        for name, counts in self.population_history.items():
-            linewidth = 3 if "RLPlayer" in name or "Smart" in name else 1.5 # IA en gras
-            self.ax.plot(self.round_history, counts, label=name, linewidth=linewidth)
+        self.play_round()
+        self.evolve()
+        self.generation += 1
         
-        self.ax.set_title("Evolution of Populations")
-        self.ax.set_xlabel("Generations")
-        self.ax.set_ylabel("Count")
-        # Légende à droite, en dehors du graphique
-        self.ax.legend(bbox_to_anchor=(1.04, 1), loc="upper left", borderaxespad=0)
+        counts = {key: 0 for key in self.history_stats}
+        for p in self.population:
+            if p.name in counts: counts[p.name] += 1
+        for key in counts: self.history_stats[key].append(counts[key])
+        self.update_plot()
+
+    def update_plot(self):
+        self.ax.clear()
+        for name, data in self.history_stats.items():
+            if len(data) > 0 and max(data) > 0: 
+                width = 3 if "RL" in name else 1.5
+                self.ax.plot(data, label=name, linewidth=width)
+        
+        self.ax.set_title(f"Gen: {self.generation}", fontweight='bold')
+        self.ax.grid(True, linestyle='--', alpha=0.5)
+        self.ax.legend(loc='upper left', fontsize=9)
         self.canvas.draw()
 
 if __name__ == "__main__":
     root = tk.Tk()
-    gui = GameGUI(root)
+    app = GameGUI(root)
     root.mainloop()

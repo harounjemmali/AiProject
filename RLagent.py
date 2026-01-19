@@ -1,31 +1,18 @@
 import random
 from Players import Player
-import pickle
-import os
 
-class RLPlayer(Player):
-    def __init__(self, name, alpha=0.5, gamma=0.9, epsilon=0.0, history_length=1):
+class BaseRLPlayer(Player):
+    def __init__(self, name, alpha=0.1, gamma=0.95, epsilon=0.05, history_length=1):
         super().__init__(name)
-        self.alpha = alpha      # Apprentissage agressif
-        self.gamma = gamma      
-        self.epsilon = 0.0      # ZERO HASARD. Il joue parfaitement dès le début.
+        self.alpha = alpha     
+        self.gamma = gamma     
+        self.epsilon = epsilon  
         self.history_length = history_length
+        self.q_table = {}
         self.opponent_history = []
-        
-        # --- LE CERVEAU PRE-REMPLI (TRICHE INTELLIGENTE) ---
-        # On ne charge pas de fichier, on lui donne la connaissance direct.
-        self.q_table = {
-            'Start':             {"Cooperate": 10.0, "Betray": 0.0}, # Au début : Coopère
-            ('Cooperate',):      {"Cooperate": 10.0, "Betray": 0.0}, # Si l'autre est gentil : Coopère
-            ('Betray',):         {"Cooperate": 0.0, "Betray": 10.0}  # Si l'autre est méchant : Trahis
-        }
-        
-        # On sauvegarde ça tout de suite pour écraser les vieilles mémoires
-        self.filename = "q_table_pretrained.pkl"
-        self.save_q_table()
 
     def get_state(self):
-        if not self.opponent_history: return 'Start'
+        if len(self.opponent_history) < self.history_length: return 'Start'
         return tuple(self.opponent_history)
 
     def perform_action(self, opponent_last_action, round_number):
@@ -35,14 +22,14 @@ class RLPlayer(Player):
                 self.opponent_history.pop(0)
 
         state = self.get_state()
-
-        # Sécurité : Si l'état est inconnu (rare), on coopère par défaut
+        
         if state not in self.q_table:
             self.q_table[state] = {"Cooperate": 5.0, "Betray": 0.0}
 
-        # Comme epsilon est à 0, il choisit TOUJOURS la meilleure action connue
-        action = max(self.q_table[state], key=self.q_table[state].get)
-        return action
+        if random.random() < self.epsilon:
+            return random.choice(["Cooperate", "Betray"])
+        
+        return max(self.q_table[state], key=self.q_table[state].get)
 
     def learn(self, prev_opponent_move, my_action, reward, current_opponent_move):
         state = self.get_state()
@@ -50,32 +37,31 @@ class RLPlayer(Player):
         future_history = self.opponent_history.copy()
         future_history.append(current_opponent_move)
         if len(future_history) > self.history_length: future_history.pop(0)
-        next_state = tuple(future_history)
+        
+        if len(future_history) < self.history_length:
+            next_state = 'Start'
+        else:
+            next_state = tuple(future_history)
 
-        # Init du futur si inconnu
         if next_state not in self.q_table:
-            # Par défaut, on suppose que Tit-for-Tat est le mieux
-            if next_state == 'Start' or (next_state and next_state[0] == 'Cooperate'):
-                self.q_table[next_state] = {"Cooperate": 5.0, "Betray": 0.0}
-            else:
-                self.q_table[next_state] = {"Cooperate": 0.0, "Betray": 5.0}
+            self.q_table[next_state] = {"Cooperate": 5.0, "Betray": 0.0}
 
-        old_value = self.q_table[state][my_action]
+        old_val = self.q_table[state][my_action]
         next_max = max(self.q_table[next_state].values())
         
-        # L'IA met à jour ses connaissances.
-        # Si elle se rend compte que TRAHIR rapporte plus (contre un Generous),
-        # la valeur de "Betray" va monter et dépasser "Cooperate".
-        new_value = old_value + self.alpha * (reward + self.gamma * next_max - old_value)
-        self.q_table[state][my_action] = new_value
-        
-        self.save_q_table()
+        # Bellman
+        new_val = old_val + self.alpha * (reward + self.gamma * next_max - old_val)
+        self.q_table[state][my_action] = new_val
 
-    def save_q_table(self):
-        try:
-            with open(self.filename, 'wb') as f: pickle.dump(self.q_table, f)
-        except: pass
+    def reset(self):
+        super().reset()
+        self.opponent_history = []
 
-class Smarty(RLPlayer):
+
+class RL_Memory2(BaseRLPlayer): 
     def __init__(self, name):
-        super().__init__(name)
+        super().__init__(name, alpha=0.1, epsilon=0.05, history_length=2)
+
+class RL_Memory4(BaseRLPlayer): 
+    def __init__(self, name):
+        super().__init__(name, alpha=0.1, epsilon=0.05, history_length=4)   
